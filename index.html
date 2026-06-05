@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>城市夜班外卖骑手模拟</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="game-container">
+        <div id="start-screen" class="screen active">
+            <div class="start-content">
+                <h1 class="game-title">🌙 城市夜班外卖骑手</h1>
+                <p class="game-subtitle">在雨夜、商圈和老旧小区之间接单送餐</p>
+                <div class="chapter-select">
+                    <h3>选择章节</h3>
+                    <div class="chapter-list" id="chapter-list"></div>
+                </div>
+                <button class="btn btn-primary" id="start-btn">开始游戏</button>
+            </div>
+        </div>
+
+        <div id="game-screen" class="screen">
+            <div class="game-top-bar">
+                <div class="player-stats">
+                    <div class="stat-item">
+                        <span class="stat-icon">⏱️</span>
+                        <span class="stat-value" id="game-time">22:00</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-icon">💰</span>
+                        <span class="stat-value" id="player-money">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-icon">⚡</span>
+                        <div class="stat-bar">
+                            <div class="stat-bar-fill" id="energy-bar" style="width: 100%"></div>
+                        </div>
+                        <span class="stat-label">体力</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-icon">🔋</span>
+                        <div class="stat-bar">
+                            <div class="stat-bar-fill battery" id="battery-bar" style="width: 100%"></div>
+                        </div>
+                        <span class="stat-label">电量</span>
+                    </div>
+                </div>
+                <div class="weather-display">
+                    <span id="weather-icon">🌧️</span>
+                    <span id="weather-text">小雨</span>
+                </div>
+            </div>
+
+            <div class="game-main">
+                <div class="game-map-container">
+                    <canvas id="game-canvas" width="800" height="600"></canvas>
+                    <div class="map-overlay" id="map-overlay"></div>
+                </div>
+
+                <div class="side-panels">
+                    <div class="panel-tabs">
+                        <button class="panel-tab active" data-panel="orders">📋 订单</button>
+                        <button class="panel-tab" data-panel="backpack">🎒 背包</button>
+                        <button class="panel-tab" data-panel="vehicle">🛵 车辆</button>
+                        <button class="panel-tab" data-panel="messages">💬 消息</button>
+                        <button class="panel-tab" data-panel="stats">📊 结算</button>
+                    </div>
+
+                    <div class="panel-content">
+                        <div class="panel active" id="panel-orders">
+                            <div class="panel-header">
+                                <h3>当前订单</h3>
+                                <span class="order-count" id="active-order-count">0</span>
+                            </div>
+                            <div class="order-list" id="current-orders"></div>
+                            <div class="panel-header">
+                                <h3>可接订单</h3>
+                            </div>
+                            <div class="order-list" id="available-orders"></div>
+                        </div>
+
+                        <div class="panel" id="panel-backpack">
+                            <div class="panel-header">
+                                <h3>背包</h3>
+                            </div>
+                            <div class="backpack-grid" id="backpack-grid"></div>
+                            <div class="panel-header">
+                                <h3>装备</h3>
+                            </div>
+                            <div class="equipment-slots" id="equipment-slots"></div>
+                        </div>
+
+                        <div class="panel" id="panel-vehicle">
+                            <div class="panel-header">
+                                <h3>车辆状态</h3>
+                            </div>
+                            <div class="vehicle-info" id="vehicle-info"></div>
+                            <div class="panel-header">
+                                <h3>充电补给</h3>
+                            </div>
+                            <div class="charge-stations" id="charge-stations"></div>
+                        </div>
+
+                        <div class="panel" id="panel-messages">
+                            <div class="panel-header">
+                                <h3>消息</h3>
+                            </div>
+                            <div class="message-list" id="message-list"></div>
+                            <div class="message-input">
+                                <input type="text" id="message-input" placeholder="输入消息...">
+                                <button id="send-message">发送</button>
+                            </div>
+                        </div>
+
+                        <div class="panel" id="panel-stats">
+                            <div class="panel-header">
+                                <h3>今日结算</h3>
+                            </div>
+                            <div class="stats-summary" id="stats-summary"></div>
+                            <div class="panel-header">
+                                <h3>技能</h3>
+                            </div>
+                            <div class="skill-list" id="skill-list"></div>
+                            <div class="panel-header">
+                                <h3>排行榜</h3>
+                            </div>
+                            <div class="leaderboard" id="leaderboard"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="game-bottom-bar">
+                <div class="controls-info">
+                    <span>WASD/方向键 - 移动</span>
+                    <span>空格 - 互动</span>
+                    <span>E - 接单/送达</span>
+                    <span>M - 地图</span>
+                </div>
+                <div class="quick-actions">
+                    <button class="quick-btn" id="btn-report">异常报备</button>
+                    <button class="quick-btn" id="btn-appeal">差评申诉</button>
+                    <button class="quick-btn" id="btn-pause">暂停</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="pause-screen" class="screen overlay">
+            <div class="pause-menu">
+                <h2>游戏暂停</h2>
+                <button class="btn" id="resume-btn">继续游戏</button>
+                <button class="btn" id="shop-btn">装备商店</button>
+                <button class="btn" id="restart-btn">重新开始</button>
+                <button class="btn" id="quit-btn">返回主菜单</button>
+            </div>
+        </div>
+
+        <div id="shop-screen" class="screen overlay">
+            <div class="shop-menu">
+                <h2>装备商店</h2>
+                <div class="shop-items" id="shop-items"></div>
+                <button class="btn" id="close-shop">关闭</button>
+            </div>
+        </div>
+
+        <div id="dialog-box" class="dialog-box hidden">
+            <div class="dialog-content">
+                <h3 id="dialog-title"></h3>
+                <p id="dialog-message"></p>
+                <div class="dialog-buttons" id="dialog-buttons"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/config.js"></script>
+    <script src="js/map.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/order.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
