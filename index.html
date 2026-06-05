@@ -60,7 +60,8 @@
 
                 <div class="side-panels">
                     <div class="panel-tabs">
-                        <button class="panel-tab active" data-panel="orders">📋 订单</button>
+                        <button class="panel-tab active" data-panel="map">🗺️ 地图</button>
+                        <button class="panel-tab" data-panel="orders">📋 订单</button>
                         <button class="panel-tab" data-panel="backpack">🎒 背包</button>
                         <button class="panel-tab" data-panel="vehicle">🛵 车辆</button>
                         <button class="panel-tab" data-panel="messages">💬 消息</button>
@@ -68,7 +69,26 @@
                     </div>
 
                     <div class="panel-content">
-                        <div class="panel active" id="panel-orders">
+                        <div class="panel active" id="panel-map">
+                            <div class="panel-header">
+                                <h3>当前章节</h3>
+                            </div>
+                            <div class="chapter-info" id="chapter-info"></div>
+                            <div class="panel-header">
+                                <h3>地点说明</h3>
+                            </div>
+                            <div class="location-legend" id="location-legend"></div>
+                            <div class="panel-header">
+                                <h3>当前目标</h3>
+                            </div>
+                            <div class="current-targets" id="current-targets"></div>
+                            <div class="panel-header">
+                                <h3>路线提示</h3>
+                            </div>
+                            <div class="route-hints" id="route-hints"></div>
+                        </div>
+
+                        <div class="panel" id="panel-orders">
                             <div class="panel-header">
                                 <h3>当前订单</h3>
                                 <span class="order-count" id="active-order-count">0</span>

@@ -22,6 +22,8 @@ class Game {
         this.storyMessageIndex = 0;
         this.lastStoryMessageTime = 0;
         this.orderGenerateTimer = 0;
+        this.lastTrafficLightCheck = 0;
+        this.trafficLightCooldown = {};
         this.init();
     }
 
@@ -50,6 +52,9 @@ class Game {
                 e.preventDefault();
                 this.interact();
             }
+            if (e.key.toLowerCase() === 'm' && !this.isPaused) {
+                this.uiManager.switchPanel('map');
+            }
         });
         document.addEventListener('keyup', (e) => {
             this.keys[e.key.toLowerCase()] = false;
@@ -74,6 +79,7 @@ class Game {
         this.storyMessageIndex = 0;
         this.messages = [];
         this.orderGenerateTimer = 0;
+        this.trafficLightCooldown = {};
         this.orderManager.generateAvailableOrders(this.currentChapter, 3);
         this.addSystemMessage('系统', `欢迎来到${this.currentChapter.name}！今晚的天气是${this.weatherModifier.name}`);
         this.addSystemMessage('站长', `今晚目标完成${this.currentChapter.orderCount}单，加油！`);
@@ -82,6 +88,7 @@ class Game {
         this.isRunning = true;
         this.isPaused = false;
         this.lastFrameTime = performance.now();
+        this.uiManager.switchPanel('map');
         requestAnimationFrame((time) => this.gameLoop(time));
     }
 
@@ -99,6 +106,7 @@ class Game {
     update(deltaTime) {
         this.updateGameTime(deltaTime);
         this.handlePlayerMovement(deltaTime);
+        this.checkTrafficLights();
         this.player.update(deltaTime, this.weatherModifier, this.player.isMoving);
         this.orderManager.update(deltaTime, this.player);
         this.gameMap.updateTrafficLights(deltaTime);
@@ -140,6 +148,50 @@ class Game {
         }
     }
 
+    checkTrafficLights() {
+        if (!this.player.isMoving) return;
+        
+        for (const light of this.gameMap.trafficLights) {
+            const distance = Math.sqrt(
+                Math.pow(this.player.x - light.x, 2) + 
+                Math.pow(this.player.y - light.y, 2)
+            );
+            
+            if (distance < 50) {
+                const cooldownKey = `light_${light.id}`;
+                const now = Date.now();
+                
+                if (light.state === 'red' && !this.trafficLightCooldown[cooldownKey]) {
+                    this.trafficLightCooldown[cooldownKey] = now + 5000;
+                    this.punishRedLight();
+                } else if (light.state === 'yellow' && !this.trafficLightCooldown[cooldownKey]) {
+                    if (Math.random() < 0.3) {
+                        this.trafficLightCooldown[cooldownKey] = now + 5000;
+                        this.punishYellowLight();
+                    }
+                }
+                
+                if (this.trafficLightCooldown[cooldownKey] && now > this.trafficLightCooldown[cooldownKey]) {
+                    delete this.trafficLightCooldown[cooldownKey];
+                }
+            }
+        }
+    }
+
+    punishRedLight() {
+        this.player.stats.satisfaction = Math.max(0, this.player.stats.satisfaction - 10);
+        this.player.vehicleDurability = Math.max(0, this.player.vehicleDurability - 5);
+        const fine = 10;
+        this.player.money = Math.max(0, this.player.money - fine);
+        this.addSystemMessage('系统', `⚠️ 闯红灯！罚款 ¥${fine}，扣除满意度，车辆耐久下降`);
+    }
+
+    punishYellowLight() {
+        this.player.stats.satisfaction = Math.max(0, this.player.stats.satisfaction - 3);
+        this.player.vehicleDurability = Math.max(0, this.player.vehicleDurability - 2);
+        this.addSystemMessage('系统', '⚠️ 抢黄灯！注意安全，轻微扣除满意度');
+    }
+
     updateOrderGeneration(deltaTime) {
         this.orderGenerateTimer += deltaTime;
         const targetOrders = this.currentChapter.orderCount - this.orderManager.completedOrders.length;
@@ -178,7 +230,7 @@ class Game {
                 return;
             }
             if (order.status === 'picked' && this.orderManager.isNearDeliveryLocation(order, this.player)) {
-                this.deliverOrder(order.id);
+                this.showBuildingSelect(order.id);
                 return;
             }
         }
@@ -192,6 +244,7 @@ class Game {
         const result = this.orderManager.acceptOrder(orderId, this.player);
         if (result.success) {
             this.addSystemMessage('系统', `已接单：${result.order.restaurant.name} -> ${result.order.deliveryLocation.name}`);
+            this.uiManager.updateAllPanels();
         } else {
             this.uiManager.showDialog('接单失败', result.message);
         }
@@ -207,16 +260,39 @@ class Game {
         const result = this.orderManager.pickupOrder(orderId);
         if (result.success) {
             this.addSystemMessage('系统', `已取餐：${order.food}，请尽快送达`);
+            this.uiManager.updateAllPanels();
         }
     }
 
-    deliverOrder(orderId) {
+    showBuildingSelect(orderId) {
         const order = this.orderManager.activeOrders.find(o => o.id === orderId);
         if (!order) return;
         if (!this.orderManager.isNearDeliveryLocation(order, this.player)) {
             this.uiManager.showDialog('距离太远', '请先到送餐位置再送达');
             return;
         }
+        
+        this.uiManager.showBuildingSelectDialog(order, (result) => {
+            if (result.timePenalty > 0) {
+                for (const o of this.orderManager.activeOrders) {
+                    o.timeRemaining -= result.timePenalty;
+                }
+                this.player.stats.satisfaction = Math.max(0, this.player.stats.satisfaction - result.satisfactionPenalty);
+                
+                let msg = '找错了楼栋！';
+                if (result.timePenalty >= 60) {
+                    msg += ' 浪费了大量时间，满意度下降较多';
+                } else {
+                    msg += ' 浪费了一点时间';
+                }
+                this.addSystemMessage('系统', msg);
+            }
+            
+            this.completeDelivery(orderId);
+        });
+    }
+
+    completeDelivery(orderId) {
         const result = this.orderManager.deliverOrder(orderId, this.player);
         if (result.success) {
             let message = `送达成功！获得 ¥${result.pay}`;
@@ -229,17 +305,42 @@ class Game {
                 message += '，顾客不太满意...';
             }
             this.addSystemMessage('系统', message);
+            this.uiManager.updateAllPanels();
+            
             if (this.orderManager.completedOrders.length >= this.currentChapter.orderCount) {
                 setTimeout(() => this.endShift(), 1000);
             }
         }
     }
 
+    deliverOrder(orderId) {
+        this.showBuildingSelect(orderId);
+    }
+
     cancelOrder(orderId) {
         const result = this.orderManager.cancelOrder(orderId, this.player);
         if (result.success) {
             this.addSystemMessage('系统', '订单已取消，扣除信誉分');
+            this.uiManager.updateAllPanels();
         }
+    }
+
+    submitReport(orderId, reason) {
+        const order = this.orderManager.activeOrders.find(o => o.id === orderId);
+        if (!order) return;
+        
+        order.reported = true;
+        order.timeRemaining += 60;
+        
+        this.addSystemMessage('系统', `报备成功！订单 #${orderId} 已标记"${reason}"，平台处理中，配送时间延长60秒`);
+        this.addMessage({
+            sender: '系统',
+            content: `报备记录：订单 #${orderId} - ${reason}`,
+            time: this.getGameTimeString(),
+            type: 'system'
+        });
+        
+        this.uiManager.updateAllPanels();
     }
 
     addSystemMessage(sender, content) {
@@ -292,9 +393,7 @@ class Game {
     }
 
     updateUI() {
-        this.uiManager.updatePlayerStats(this.player, this.getGameTimeString(), this.weather);
-        this.uiManager.updateOrders(this.orderManager);
-        this.uiManager.updateMessages(this.messages);
+        this.uiManager.updateAllPanels();
     }
 
     render() {
@@ -302,6 +401,7 @@ class Game {
         this.player.render(this.ctx);
         this.renderOrderRoutes();
         this.renderInteractionHints();
+        this.renderTrafficLightWarnings();
     }
 
     renderOrderRoutes() {
@@ -348,6 +448,25 @@ class Game {
                 ctx.font = '12px Arial';
                 ctx.textAlign = 'center';
                 ctx.fillText('按E/空格送达', order.deliveryLocation.x, order.deliveryLocation.y - 33);
+            }
+        }
+    }
+
+    renderTrafficLightWarnings() {
+        const ctx = this.ctx;
+        for (const light of this.gameMap.trafficLights) {
+            const distance = Math.sqrt(
+                Math.pow(this.player.x - light.x, 2) + 
+                Math.pow(this.player.y - light.y, 2)
+            );
+            
+            if (distance < 80 && light.state === 'red') {
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+                ctx.fillRect(light.x - 40, light.y - 50, 80, 20);
+                ctx.fillStyle = '#fff';
+                ctx.font = '11px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('红灯！停车', light.x, light.y - 36);
             }
         }
     }
