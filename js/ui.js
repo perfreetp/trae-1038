@@ -608,6 +608,8 @@ class UIManager {
         player.money -= repairCost;
         player.vehicleDurability = 100;
         player.stats.repairsMade++;
+        player.activeEvent = null;
+        player.eventEndTime = 0;
         player.calculateEffectiveSpeed();
         
         for (const order of this.game.orderManager.activeOrders) {
@@ -615,7 +617,7 @@ class UIManager {
         }
         
         this.updateAllPanels();
-        this.showDialog('维修完成', `车辆已修复，花费 ¥${repairCost}`);
+        this.showDialog('维修完成', `车辆已修复，异常状态已清除，花费 ¥${repairCost}`);
     }
 
     updateMessages(messages) {
@@ -898,6 +900,7 @@ class UIManager {
         let selectedFloor = null;
         let selectedUnit = null;
         let attempts = 0;
+        let isOpen = true;
         
         const renderContent = () => `
             <div class="building-select-dialog">
@@ -913,7 +916,7 @@ class UIManager {
                     <p style="margin: 10px 0 5px;">选择单元：</p>
                     <div class="unit-select">
                         ${['1单元', '2单元', '3单元'].map(u => 
-                            `<button class="unit-btn" data-unit="${u}">${u}</button>`
+                            `<button class="unit-btn" data-unit="${u}" ${selectedUnit === u ? 'class="selected"' : ''}>${u}</button>`
                         ).join('')}
                     </div>
                 </div>
@@ -922,7 +925,7 @@ class UIManager {
                     <p style="margin: 10px 0 5px;">选择楼层：</p>
                     <div class="floor-grid">
                         ${Array.from({length: maxFloor}, (_, i) => i + 1).map(f => 
-                            `<button class="floor-btn" data-floor="${f}">${f}楼</button>`
+                            `<button class="floor-btn" data-floor="${f}" ${selectedFloor === f ? 'class="selected"' : ''}>${f}楼</button>`
                         ).join('')}
                     </div>
                 </div>
@@ -937,9 +940,11 @@ class UIManager {
         document.getElementById('dialog-title').textContent = '楼栋选择';
         
         const updateContent = () => {
+            if (!isOpen) return;
             document.getElementById('dialog-message').innerHTML = renderContent();
             
             setTimeout(() => {
+                if (!isOpen) return;
                 document.querySelectorAll('.unit-btn').forEach(btn => {
                     btn.addEventListener('click', () => {
                         document.querySelectorAll('.unit-btn').forEach(b => b.classList.remove('selected'));
@@ -954,6 +959,15 @@ class UIManager {
                         selectedFloor = parseInt(btn.dataset.floor);
                     });
                 });
+                
+                if (selectedUnit) {
+                    const unitBtn = document.querySelector(`.unit-btn[data-unit="${selectedUnit}"]`);
+                    if (unitBtn) unitBtn.classList.add('selected');
+                }
+                if (selectedFloor) {
+                    const floorBtn = document.querySelector(`.floor-btn[data-floor="${selectedFloor}"]`);
+                    if (floorBtn) floorBtn.classList.add('selected');
+                }
             }, 50);
         };
         
@@ -966,8 +980,9 @@ class UIManager {
         cancelBtn.className = 'dialog-btn';
         cancelBtn.textContent = '取消';
         cancelBtn.addEventListener('click', () => {
+            isOpen = false;
             dialog.classList.add('hidden');
-            onComplete({ success: false });
+            onComplete({ success: false, cancelled: true });
         });
         buttonsEl.appendChild(cancelBtn);
         
@@ -979,6 +994,7 @@ class UIManager {
                 const isCorrect = selectedFloor === correctFloor && selectedUnit === correctUnit;
                 
                 if (isCorrect) {
+                    isOpen = false;
                     dialog.classList.add('hidden');
                     onComplete({ 
                         success: true, 
@@ -987,12 +1003,20 @@ class UIManager {
                     });
                 } else {
                     attempts++;
-                    selectedFloor = null;
-                    selectedUnit = null;
-                    updateContent();
                     
                     if (attempts >= 3) {
-                        this.showDialog('提示', '多次选错，建议仔细核对地址信息');
+                        const oldOnComplete = onComplete;
+                        this.showDialog('提示', '多次选错，建议仔细核对地址信息。点击确定后继续选择。', [
+                            { text: '确定', primary: true, callback: () => {
+                                selectedFloor = null;
+                                selectedUnit = null;
+                                updateContent();
+                            }}
+                        ]);
+                    } else {
+                        selectedFloor = null;
+                        selectedUnit = null;
+                        updateContent();
                     }
                 }
             }
@@ -1002,14 +1026,14 @@ class UIManager {
         dialog.classList.remove('hidden');
     }
     
-    showCustomerInteractionDialog(order, interaction) {
+    showCustomerInteractionDialog(order, interaction, messageContent) {
         const content = `
             <div class="customer-interaction-dialog">
                 <p style="margin-bottom: 10px;">
                     <strong>顾客-${order.customerName}</strong> (订单 #${order.id})
                 </p>
                 <p style="background: rgba(245, 158, 11, 0.1); padding: 10px; border-radius: 6px; margin-bottom: 15px;">
-                    ${this.game.getCustomerMessageContent(interaction)}
+                    "${messageContent}"
                 </p>
                 <p style="font-size: 13px; color: #aaa; margin-bottom: 10px;">请选择回复：</p>
                 <div class="response-options">
@@ -1049,25 +1073,57 @@ class UIManager {
     showShiftReview(summary, completedOrders, finalScore, buttons) {
         let orderDetails = '';
         if (completedOrders && completedOrders.length > 0) {
-            orderDetails = '<div style="margin-top: 15px; max-height: 200px; overflow-y: auto;">';
+            orderDetails = '<div style="margin-top: 15px; max-height: 250px; overflow-y: auto;">';
             orderDetails += '<p style="font-weight: bold; margin-bottom: 8px;">📋 每单详情：</p>';
             for (const order of completedOrders) {
                 const record = order.record || {};
                 const tags = [];
-                if (record.onTime) tags.push('<span class="tag positive">准时</span>');
-                else tags.push('<span class="tag negative">超时</span>');
-                if (record.redLightRun) tags.push('<span class="tag negative">闯红灯</span>');
-                if (record.reported) tags.push('<span class="tag warning">已报备</span>');
-                if (record.wrongBuilding) tags.push('<span class="tag negative">找错楼</span>');
-                if (record.chainBonus > 0) tags.push('<span class="tag positive">连单+¥' + record.chainBonus + '</span>');
+                const effects = [];
+                
+                if (record.onTime) {
+                    tags.push('<span class="tag positive">准时</span>');
+                    effects.push('+50分');
+                } else {
+                    tags.push('<span class="tag negative">超时</span>');
+                    effects.push('-50分');
+                }
+                if (record.redLightRun) {
+                    tags.push('<span class="tag negative">闯红灯</span>');
+                    effects.push('-100分');
+                }
+                if (record.reported) {
+                    tags.push('<span class="tag warning">已报备</span>');
+                    effects.push('-30分');
+                }
+                if (record.wrongBuilding) {
+                    tags.push('<span class="tag negative">找错楼</span>');
+                    effects.push('-50分');
+                }
+                if (record.charged) {
+                    tags.push('<span class="tag info">途中充电</span>');
+                }
+                if (record.repaired) {
+                    tags.push('<span class="tag info">途中维修</span>');
+                }
+                if (record.chainBonus > 0) {
+                    tags.push('<span class="tag positive">连单+¥' + record.chainBonus + '</span>');
+                }
+                if (record.customerInteraction) {
+                    tags.push('<span class="tag info">顾客沟通</span>');
+                }
                 
                 orderDetails += `
-                    <div style="padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-bottom: 6px;">
-                        <div style="display: flex; justify-content: space-between;">
-                            <span>#${order.id} ${order.restaurant.name} → ${order.deliveryLocation.name}</span>
-                            <span>¥${order.finalPay || order.pay}</span>
+                    <div style="padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px; margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                            <span style="font-weight: 500;">#${order.id} ${order.restaurant.name} → ${order.deliveryLocation.name}</span>
+                            <span style="color: #22c55e;">¥${order.finalPay || order.pay}</span>
                         </div>
-                        <div style="margin-top: 4px;">${tags.join(' ')}</div>
+                        <div style="margin-bottom: 4px;">${tags.join(' ')}</div>
+                        ${record.customerInteraction ? `
+                            <div style="font-size: 11px; color: #aaa; margin-top: 4px;">
+                                💬 ${record.customerInteraction.type}: "${record.customerInteraction.response}"
+                            </div>
+                        ` : ''}
                     </div>
                 `;
             }

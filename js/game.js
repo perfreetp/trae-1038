@@ -7,7 +7,7 @@ class Game {
         this.orderManager = null;
         this.uiManager = null;
         this.selectedChapter = 1;
-        this.unlockedChapters = [1, 2, 3];
+        this.unlockedChapters = [1, 2, 3, 4, 5, 6, 7];
         this.currentChapter = null;
         this.chapterFeatures = null;
         this.isRunning = false;
@@ -166,20 +166,29 @@ class Game {
         const order = activeOrders[Math.floor(Math.random() * activeOrders.length)];
         const interactions = GameConfig.customerInteractions;
         const interaction = interactions[Math.floor(Math.random() * interactions.length)];
+        const messageContent = this.getCustomerMessageContent(interaction);
         
         this.pendingCustomerMessage = {
             order: order,
-            interaction: interaction
+            interaction: interaction,
+            messageContent: messageContent
+        };
+        
+        order.pendingCustomerMessage = {
+            interaction: interaction,
+            messageContent: messageContent
         };
         
         this.addMessage({
             sender: `顾客-${order.customerName}`,
-            content: this.getCustomerMessageContent(interaction),
+            content: messageContent,
             time: this.getGameTimeString(),
-            type: 'customer'
+            type: 'customer',
+            orderId: order.id,
+            interactionType: interaction.id
         });
         
-        this.uiManager.showCustomerInteractionDialog(order, interaction);
+        this.uiManager.showCustomerInteractionDialog(order, interaction, messageContent);
     }
     
     getCustomerMessageContent(interaction) {
@@ -194,7 +203,7 @@ class Game {
     
     handleCustomerResponse(orderId, responseIndex) {
         if (!this.pendingCustomerMessage) return;
-        const { order, interaction } = this.pendingCustomerMessage;
+        const { order, interaction, messageContent } = this.pendingCustomerMessage;
         if (order.id !== orderId) return;
         
         const response = interaction.responses[responseIndex];
@@ -222,16 +231,20 @@ class Game {
         
         order.record.customerInteraction = {
             type: interaction.id,
-            response: response.text
+            customerMessage: messageContent,
+            playerResponse: response.text
         };
         
         this.addMessage({
             sender: '我',
             content: response.text,
             time: this.getGameTimeString(),
-            type: 'player'
+            type: 'player',
+            orderId: order.id,
+            replyTo: messageContent
         });
         
+        delete order.pendingCustomerMessage;
         this.pendingCustomerMessage = null;
         this.uiManager.updateAllPanels();
     }
@@ -398,6 +411,10 @@ class Game {
         }
         
         this.uiManager.showBuildingSelectDialog(order, (result) => {
+            if (result.cancelled) {
+                return;
+            }
+            
             if (result.success) {
                 if (result.timePenalty > 0) {
                     for (const o of this.orderManager.activeOrders) {
@@ -422,8 +439,6 @@ class Game {
                 }
                 
                 this.completeDelivery(orderId);
-            } else {
-                this.showBuildingSelect(orderId);
             }
         });
     }
@@ -564,11 +579,27 @@ class Game {
 
     renderOrderRoutes() {
         const ctx = this.ctx;
+        const priorityOrderId = this.player.priorityOrderId;
+        
         for (const order of this.orderManager.activeOrders) {
-            ctx.strokeStyle = order.status === 'accepted' ? '#3b82f6' : '#f59e0b';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
-            ctx.globalAlpha = 0.5;
+            const isPriority = order.id === priorityOrderId;
+            const baseColor = order.status === 'accepted' ? '#3b82f6' : '#f59e0b';
+            
+            if (isPriority) {
+                ctx.strokeStyle = '#fbbf24';
+                ctx.lineWidth = 4;
+                ctx.setLineDash([]);
+                ctx.globalAlpha = 0.9;
+                ctx.shadowColor = '#fbbf24';
+                ctx.shadowBlur = 10;
+            } else {
+                ctx.strokeStyle = baseColor;
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.globalAlpha = 0.3;
+                ctx.shadowBlur = 0;
+            }
+            
             const targetX = order.status === 'accepted' ? order.restaurant.x : order.deliveryLocation.x;
             const targetY = order.status === 'accepted' ? order.restaurant.y : order.deliveryLocation.y;
             ctx.beginPath();
@@ -577,14 +608,29 @@ class Game {
             ctx.stroke();
             ctx.setLineDash([]);
             ctx.globalAlpha = 1;
-            ctx.fillStyle = order.status === 'accepted' ? '#3b82f6' : '#f59e0b';
-            ctx.beginPath();
-            ctx.arc(targetX, targetY, 15, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#fff';
-            ctx.font = '12px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(order.status === 'accepted' ? '取' : '送', targetX, targetY + 4);
+            ctx.shadowBlur = 0;
+            
+            if (isPriority) {
+                ctx.fillStyle = '#fbbf24';
+                ctx.beginPath();
+                ctx.arc(targetX, targetY, 20, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('★', targetX, targetY + 5);
+            } else {
+                ctx.fillStyle = baseColor;
+                ctx.globalAlpha = 0.5;
+                ctx.beginPath();
+                ctx.arc(targetX, targetY, 12, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = '#fff';
+                ctx.font = '11px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(order.status === 'accepted' ? '取' : '送', targetX, targetY + 4);
+            }
         }
     }
 
