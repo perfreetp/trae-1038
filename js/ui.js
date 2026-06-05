@@ -567,6 +567,7 @@ class UIManager {
         const player = this.game.player;
         const chargeAmount = 30 * station.speed;
         const cost = station.price;
+        const chargeTime = 5;
         
         if (player.money < cost) {
             this.showDialog('余额不足', `需要 ¥${cost} 才能充电`);
@@ -590,15 +591,19 @@ class UIManager {
         
         for (const order of this.game.orderManager.activeOrders) {
             order.record.charged = true;
+            order.record.chargeCost = (order.record.chargeCost || 0) + cost;
+            order.record.chargeTime = (order.record.chargeTime || 0) + chargeTime;
+            order.timeRemaining -= chargeTime;
         }
         
         this.updateAllPanels();
-        this.showDialog('充电完成', `已充电 +${Math.floor(chargeAmount)}，花费 ¥${cost}`);
+        this.showDialog('充电完成', `已充电 +${Math.floor(chargeAmount)}，花费 ¥${cost}，耗时 ${chargeTime}秒`);
     }
 
     repairVehicle() {
         const player = this.game.player;
         const repairCost = Math.ceil((100 - player.vehicleDurability) * 0.5);
+        const repairTime = 8;
         
         if (player.money < repairCost) {
             this.showDialog('余额不足', `维修需要 ¥${repairCost}`);
@@ -614,10 +619,13 @@ class UIManager {
         
         for (const order of this.game.orderManager.activeOrders) {
             order.record.repaired = true;
+            order.record.repairCost = (order.record.repairCost || 0) + repairCost;
+            order.record.repairTime = (order.record.repairTime || 0) + repairTime;
+            order.timeRemaining -= repairTime;
         }
         
         this.updateAllPanels();
-        this.showDialog('维修完成', `车辆已修复，异常状态已清除，花费 ¥${repairCost}`);
+        this.showDialog('维修完成', `车辆已修复，异常状态已清除，花费 ¥${repairCost}，耗时 ${repairTime}秒`);
     }
 
     updateMessages(messages) {
@@ -901,6 +909,7 @@ class UIManager {
         let selectedUnit = null;
         let attempts = 0;
         let isOpen = true;
+        let showWarning = false;
         
         const renderContent = () => `
             <div class="building-select-dialog">
@@ -908,15 +917,25 @@ class UIManager {
                 <p style="font-size: 13px; color: #4a9eff; margin-bottom: 10px;">
                     📍 目标地址：${details.fullAddress}
                 </p>
+                ${showWarning ? `
+                    <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+                        <p style="color: #fca5a5; margin: 0; font-size: 13px;">
+                            ⚠️ 已选错 ${attempts} 次，建议仔细核对地址信息
+                        </p>
+                    </div>
+                ` : ''}
+                ${attempts > 0 && !showWarning ? `
+                    <p style="font-size: 12px; color: #ef4444; margin-bottom: 10px;">
+                        ❌ 上次选错了，请重新选择（已尝试 ${attempts} 次）
+                    </p>
+                ` : ''}
                 <p style="font-size: 13px; color: #aaa;">请选择正确的单元和楼层进行配送</p>
-                
-                ${attempts > 0 ? `<p style="font-size: 12px; color: #ef4444;">❌ 上次选错了，请重新选择（已尝试 ${attempts} 次）</p>` : ''}
                 
                 <div>
                     <p style="margin: 10px 0 5px;">选择单元：</p>
                     <div class="unit-select">
                         ${['1单元', '2单元', '3单元'].map(u => 
-                            `<button class="unit-btn" data-unit="${u}" ${selectedUnit === u ? 'class="selected"' : ''}>${u}</button>`
+                            `<button class="unit-btn" data-unit="${u}">${u}</button>`
                         ).join('')}
                     </div>
                 </div>
@@ -925,7 +944,7 @@ class UIManager {
                     <p style="margin: 10px 0 5px;">选择楼层：</p>
                     <div class="floor-grid">
                         ${Array.from({length: maxFloor}, (_, i) => i + 1).map(f => 
-                            `<button class="floor-btn" data-floor="${f}" ${selectedFloor === f ? 'class="selected"' : ''}>${f}楼</button>`
+                            `<button class="floor-btn" data-floor="${f}">${f}楼</button>`
                         ).join('')}
                     </div>
                 </div>
@@ -971,58 +990,49 @@ class UIManager {
             }, 50);
         };
         
-        updateContent();
-        
-        const buttonsEl = document.getElementById('dialog-buttons');
-        buttonsEl.innerHTML = '';
-        
-        const cancelBtn = document.createElement('button');
-        cancelBtn.className = 'dialog-btn';
-        cancelBtn.textContent = '取消';
-        cancelBtn.addEventListener('click', () => {
-            isOpen = false;
-            dialog.classList.add('hidden');
-            onComplete({ success: false, cancelled: true });
-        });
-        buttonsEl.appendChild(cancelBtn);
-        
-        const confirmBtn = document.createElement('button');
-        confirmBtn.className = 'dialog-btn primary';
-        confirmBtn.textContent = '确认送达';
-        confirmBtn.addEventListener('click', () => {
-            if (selectedFloor && selectedUnit) {
-                const isCorrect = selectedFloor === correctFloor && selectedUnit === correctUnit;
-                
-                if (isCorrect) {
-                    isOpen = false;
-                    dialog.classList.add('hidden');
-                    onComplete({ 
-                        success: true, 
-                        timePenalty: attempts * 20, 
-                        satisfactionPenalty: attempts * 3 
-                    });
-                } else {
-                    attempts++;
+        const setupButtons = () => {
+            const buttonsEl = document.getElementById('dialog-buttons');
+            buttonsEl.innerHTML = '';
+            
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'dialog-btn';
+            cancelBtn.textContent = '取消';
+            cancelBtn.addEventListener('click', () => {
+                isOpen = false;
+                dialog.classList.add('hidden');
+                onComplete({ success: false, cancelled: true });
+            });
+            buttonsEl.appendChild(cancelBtn);
+            
+            const confirmBtn = document.createElement('button');
+            confirmBtn.className = 'dialog-btn primary';
+            confirmBtn.textContent = '确认送达';
+            confirmBtn.addEventListener('click', () => {
+                if (selectedFloor && selectedUnit) {
+                    const isCorrect = selectedFloor === correctFloor && selectedUnit === correctUnit;
                     
-                    if (attempts >= 3) {
-                        const oldOnComplete = onComplete;
-                        this.showDialog('提示', '多次选错，建议仔细核对地址信息。点击确定后继续选择。', [
-                            { text: '确定', primary: true, callback: () => {
-                                selectedFloor = null;
-                                selectedUnit = null;
-                                updateContent();
-                            }}
-                        ]);
+                    if (isCorrect) {
+                        isOpen = false;
+                        dialog.classList.add('hidden');
+                        onComplete({ 
+                            success: true, 
+                            timePenalty: attempts * 20, 
+                            satisfactionPenalty: attempts * 3 
+                        });
                     } else {
+                        attempts++;
                         selectedFloor = null;
                         selectedUnit = null;
+                        showWarning = attempts >= 3;
                         updateContent();
                     }
                 }
-            }
-        });
-        buttonsEl.appendChild(confirmBtn);
+            });
+            buttonsEl.appendChild(confirmBtn);
+        };
         
+        updateContent();
+        setupButtons();
         dialog.classList.remove('hidden');
     }
     
@@ -1111,6 +1121,31 @@ class UIManager {
                 if (record.customerInteraction) {
                     tags.push('<span class="tag info">顾客沟通</span>');
                 }
+                if (record.chargeCost > 0) {
+                    tags.push(`<span class="tag info">充电-¥${record.chargeCost}</span>`);
+                }
+                if (record.repairCost > 0) {
+                    tags.push(`<span class="tag info">维修-¥${record.repairCost}</span>`);
+                }
+                
+                const interactionText = record.customerInteraction ? `
+                    <div style="font-size: 11px; color: #aaa; margin-top: 6px; line-height: 1.6;">
+                        <div>💬 顾客: "${record.customerInteraction.customerMessage || '无'}"</div>
+                        <div>📝 回复: "${record.customerInteraction.playerResponse || record.customerInteraction.response || '无'}"</div>
+                    </div>
+                ` : '';
+                
+                const behaviorText = [];
+                if (record.chargeCost > 0) behaviorText.push(`充电花费 ¥${record.chargeCost}`);
+                if (record.repairCost > 0) behaviorText.push(`维修花费 ¥${record.repairCost}`);
+                if (record.chargeTime > 0) behaviorText.push(`充电耗时 ${record.chargeTime}s`);
+                if (record.repairTime > 0) behaviorText.push(`维修耗时 ${record.repairTime}s`);
+                
+                const behaviorDisplay = behaviorText.length > 0 ? `
+                    <div style="font-size: 11px; color: #f59e0b; margin-top: 4px;">
+                        💰 ${behaviorText.join(' | ')}
+                    </div>
+                ` : '';
                 
                 orderDetails += `
                     <div style="padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px; margin-bottom: 8px;">
@@ -1119,11 +1154,8 @@ class UIManager {
                             <span style="color: #22c55e;">¥${order.finalPay || order.pay}</span>
                         </div>
                         <div style="margin-bottom: 4px;">${tags.join(' ')}</div>
-                        ${record.customerInteraction ? `
-                            <div style="font-size: 11px; color: #aaa; margin-top: 4px;">
-                                💬 ${record.customerInteraction.type}: "${record.customerInteraction.response}"
-                            </div>
-                        ` : ''}
+                        ${interactionText}
+                        ${behaviorDisplay}
                     </div>
                 `;
             }

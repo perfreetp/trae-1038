@@ -450,6 +450,7 @@ class Game {
             if (order.isChainOrder) {
                 order.record.chainBonus = Math.floor(order.pay * GameConfig.gameSettings.chainOrderBonus);
             }
+            order.finalPay = order.pay + (order.tip || 0) + (order.record.chainBonus || 0);
         }
         
         const result = this.orderManager.deliverOrder(orderId, this.player);
@@ -467,11 +468,28 @@ class Game {
                 message += '，顾客不太满意...';
             }
             this.addSystemMessage('系统', message);
-            this.uiManager.updateAllPanels();
             
             if (this.player.priorityOrderId === orderId) {
-                this.player.priorityOrderId = null;
+                const remainingOrders = this.orderManager.activeOrders.filter(o => o.id !== orderId);
+                if (remainingOrders.length > 0) {
+                    const nearestOrder = remainingOrders.reduce((nearest, o) => {
+                        const target = o.status === 'accepted' ? o.restaurant : o.deliveryLocation;
+                        const dist = Math.sqrt(Math.pow(target.x - this.player.x, 2) + Math.pow(target.y - this.player.y, 2));
+                        if (!nearest || dist < nearest.dist) {
+                            return { order: o, dist };
+                        }
+                        return nearest;
+                    }, null);
+                    if (nearestOrder) {
+                        this.player.priorityOrderId = nearestOrder.order.id;
+                        this.addSystemMessage('系统', `已自动切换优先目标到订单 #${nearestOrder.order.id}`);
+                    }
+                } else {
+                    this.player.priorityOrderId = null;
+                }
             }
+            
+            this.uiManager.updateAllPanels();
             
             if (this.orderManager.completedOrders.length >= this.currentChapter.orderCount) {
                 setTimeout(() => this.endShift(), 1000);
@@ -719,12 +737,26 @@ class Game {
         const chargeCount = this.player.stats.chargesMade;
         const repairCount = this.player.stats.repairsMade;
         
+        let totalChargeCost = 0;
+        let totalRepairCost = 0;
+        let totalChargeTime = 0;
+        let totalRepairTime = 0;
+        for (const order of this.orderManager.completedOrders) {
+            if (order.record) {
+                totalChargeCost += order.record.chargeCost || 0;
+                totalRepairCost += order.record.repairCost || 0;
+                totalChargeTime += order.record.chargeTime || 0;
+                totalRepairTime += order.record.repairTime || 0;
+            }
+        }
+        
         const baseScore = totalEarnings + completed * 100;
         const onTimeBonus = onTimeCount * 50;
         const redLightPenalty = redLightCount * 100;
         const reportPenalty = reportCount * 30;
         const wrongBuildingPenalty = wrongBuildingCount * 50;
-        const finalScore = Math.max(0, baseScore + onTimeBonus - redLightPenalty - reportPenalty - wrongBuildingPenalty);
+        const maintenancePenalty = Math.floor((totalChargeCost + totalRepairCost) * 0.5);
+        const finalScore = Math.max(0, baseScore + onTimeBonus - redLightPenalty - reportPenalty - wrongBuildingPenalty - maintenancePenalty);
         
         let message = `班次结算 - ${this.currentChapter.name}\n\n`;
         message += `━━━━━━━━━━━━━━━━\n`;
@@ -736,11 +768,12 @@ class Game {
         message += `满意度: ${Math.floor(this.player.stats.satisfaction)}%\n\n`;
         message += `━━━━━━━━━━━━━━━━\n`;
         message += `📊 行为记录：\n`;
-        message += `闯红灯: ${redLightCount}次 (-¥${redLightPenalty})\n`;
-        message += `异常报备: ${reportCount}次 (-¥${reportPenalty})\n`;
-        message += `找错楼栋: ${wrongBuildingCount}次 (-¥${wrongBuildingPenalty})\n`;
-        message += `充电次数: ${chargeCount}次\n`;
-        message += `维修次数: ${repairCount}次\n\n`;
+        message += `闯红灯: ${redLightCount}次 (-${redLightPenalty}分)\n`;
+        message += `异常报备: ${reportCount}次 (-${reportPenalty}分)\n`;
+        message += `找错楼栋: ${wrongBuildingCount}次 (-${wrongBuildingPenalty}分)\n`;
+        message += `充电: ${chargeCount}次, 花费 ¥${totalChargeCost}, 耗时 ${totalChargeTime}s\n`;
+        message += `维修: ${repairCount}次, 花费 ¥${totalRepairCost}, 耗时 ${totalRepairTime}s\n`;
+        message += `养护开销扣分: -${maintenancePenalty}分\n\n`;
         message += `━━━━━━━━━━━━━━━━\n`;
         message += `🏆 最终评分: ${finalScore}分\n\n`;
         
