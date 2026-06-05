@@ -9,6 +9,7 @@ class Game {
         this.selectedChapter = 1;
         this.unlockedChapters = [1, 2, 3];
         this.currentChapter = null;
+        this.chapterFeatures = null;
         this.isRunning = false;
         this.isPaused = false;
         this.gameTime = 0;
@@ -24,6 +25,8 @@ class Game {
         this.orderGenerateTimer = 0;
         this.lastTrafficLightCheck = 0;
         this.trafficLightCooldown = {};
+        this.customerMessageTimer = 0;
+        this.pendingCustomerMessage = null;
         this.init();
     }
 
@@ -69,6 +72,7 @@ class Game {
     startGame() {
         this.currentChapter = GameConfig.chapters.find(c => c.id === this.selectedChapter);
         if (!this.currentChapter) return;
+        this.chapterFeatures = GameConfig.chapterFeatures[this.currentChapter.id] || GameConfig.chapterFeatures[1];
         this.player = new Player();
         this.orderManager = new OrderManager();
         this.weather = this.currentChapter.weather;
@@ -80,9 +84,17 @@ class Game {
         this.messages = [];
         this.orderGenerateTimer = 0;
         this.trafficLightCooldown = {};
+        this.customerMessageTimer = 0;
+        this.pendingCustomerMessage = null;
         this.orderManager.generateAvailableOrders(this.currentChapter, 3);
         this.addSystemMessage('系统', `欢迎来到${this.currentChapter.name}！今晚的天气是${this.weatherModifier.name}`);
         this.addSystemMessage('站长', `今晚目标完成${this.currentChapter.orderCount}单，加油！`);
+        if (this.chapterFeatures.elevatorWait > 0) {
+            this.addSystemMessage('系统', `提示：本章节电梯等待时间较长，请预留足够时间`);
+        }
+        if (this.chapterFeatures.urgentRate > 0.2) {
+            this.addSystemMessage('系统', `提示：本章节急单较多，注意时间管理`);
+        }
         document.getElementById('start-screen').classList.remove('active');
         document.getElementById('game-screen').classList.add('active');
         this.isRunning = true;
@@ -107,18 +119,121 @@ class Game {
         this.updateGameTime(deltaTime);
         this.handlePlayerMovement(deltaTime);
         this.checkTrafficLights();
-        this.player.update(deltaTime, this.weatherModifier, this.player.isMoving);
+        this.player.update(deltaTime, this.weatherModifier, this.player.isMoving, this.chapterFeatures);
+        
+        if (this.player.activeEvent && !this.player.activeEvent.notified) {
+            this.player.activeEvent.notified = true;
+            this.addSystemMessage('系统', `⚠️ ${this.player.activeEvent.name}！请耐心等待恢复`);
+        }
+        
         this.orderManager.update(deltaTime, this.player);
         this.gameMap.updateTrafficLights(deltaTime);
-        this.gameMap.updateWeather(this.weather, deltaTime);
+        
+        const weatherMod = { ...this.weatherModifier };
+        if (this.chapterFeatures && this.chapterFeatures.visionMultiplier) {
+            weatherMod.visibility *= this.chapterFeatures.visionMultiplier;
+        }
+        this.gameMap.updateWeather(this.weather, deltaTime, weatherMod);
+        
         this.updateOrderGeneration(deltaTime);
         this.updateStoryMessages();
+        this.updateCustomerMessages(deltaTime);
         this.updateUI();
         this.checkGameEnd();
         if (this.player.energy <= 0) {
             this.addSystemMessage('系统', '体力耗尽！请休息或使用补给品');
             this.player.energy = 10;
         }
+    }
+    
+    updateCustomerMessages(deltaTime) {
+        if (this.pendingCustomerMessage) return;
+        if (this.orderManager.activeOrders.length === 0) return;
+        
+        this.customerMessageTimer += deltaTime;
+        if (this.customerMessageTimer > 15000) {
+            this.customerMessageTimer = 0;
+            if (Math.random() < 0.3) {
+                this.triggerCustomerMessage();
+            }
+        }
+    }
+    
+    triggerCustomerMessage() {
+        const activeOrders = this.orderManager.activeOrders.filter(o => o.status === 'picked');
+        if (activeOrders.length === 0) return;
+        
+        const order = activeOrders[Math.floor(Math.random() * activeOrders.length)];
+        const interactions = GameConfig.customerInteractions;
+        const interaction = interactions[Math.floor(Math.random() * interactions.length)];
+        
+        this.pendingCustomerMessage = {
+            order: order,
+            interaction: interaction
+        };
+        
+        this.addMessage({
+            sender: `顾客-${order.customerName}`,
+            content: this.getCustomerMessageContent(interaction),
+            time: this.getGameTimeString(),
+            type: 'customer'
+        });
+        
+        this.uiManager.showCustomerInteractionDialog(order, interaction);
+    }
+    
+    getCustomerMessageContent(interaction) {
+        const contents = {
+            'urge': ['你好，我的餐什么时候到啊？', '骑手到哪了？能快点吗？', '等好久了，还有多久？'],
+            'change_address': ['不好意思，我临时换地方了，能改下地址吗？', '骑手你好，我现在不在原来的地方了'],
+            'leave_door': ['你好，到了直接放门口就行，不用敲门', '我不方便开门，放门口吧谢谢']
+        };
+        const list = contents[interaction.id] || ['您好'];
+        return list[Math.floor(Math.random() * list.length)];
+    }
+    
+    handleCustomerResponse(orderId, responseIndex) {
+        if (!this.pendingCustomerMessage) return;
+        const { order, interaction } = this.pendingCustomerMessage;
+        if (order.id !== orderId) return;
+        
+        const response = interaction.responses[responseIndex];
+        const effect = response.effect;
+        
+        if (effect.time) {
+            order.timeRemaining += effect.time;
+        }
+        if (effect.satisfaction) {
+            this.player.stats.satisfaction = Math.max(0, Math.min(100, this.player.stats.satisfaction + effect.satisfaction));
+        }
+        if (effect.extraPay) {
+            order.pay += effect.extraPay;
+        }
+        if (effect.changeTarget) {
+            const locations = GameConfig.deliveryLocations.filter(l => l.id !== order.deliveryLocation.id);
+            if (locations.length > 0) {
+                order.deliveryLocation = locations[Math.floor(Math.random() * locations.length)];
+                order.deliveryDetails = this.orderManager.generateDeliveryDetails(order.deliveryLocation);
+            }
+        }
+        if (effect.leaveAtDoor) {
+            order.leaveAtDoor = true;
+        }
+        
+        order.record.customerInteraction = {
+            type: interaction.id,
+            response: response.text
+        };
+        
+        this.addMessage({
+            sender: '我',
+            content: response.text,
+            time: this.getGameTimeString(),
+            type: 'player'
+        });
+        
+        this.pendingCustomerMessage = null;
+        this.uiManager.updateAllPanels();
     }
 
     updateGameTime(deltaTime) {
@@ -181,9 +296,14 @@ class Game {
     punishRedLight() {
         this.player.stats.satisfaction = Math.max(0, this.player.stats.satisfaction - 10);
         this.player.vehicleDurability = Math.max(0, this.player.vehicleDurability - 5);
+        this.player.stats.redLightsRun++;
         const fine = 10;
         this.player.money = Math.max(0, this.player.money - fine);
         this.addSystemMessage('系统', `⚠️ 闯红灯！罚款 ¥${fine}，扣除满意度，车辆耐久下降`);
+        
+        for (const order of this.orderManager.activeOrders) {
+            order.record.redLightRun = true;
+        }
     }
 
     punishYellowLight() {
@@ -272,32 +392,59 @@ class Game {
             return;
         }
         
-        this.uiManager.showBuildingSelectDialog(order, (result) => {
-            if (result.timePenalty > 0) {
-                for (const o of this.orderManager.activeOrders) {
-                    o.timeRemaining -= result.timePenalty;
-                }
-                this.player.stats.satisfaction = Math.max(0, this.player.stats.satisfaction - result.satisfactionPenalty);
-                
-                let msg = '找错了楼栋！';
-                if (result.timePenalty >= 60) {
-                    msg += ' 浪费了大量时间，满意度下降较多';
-                } else {
-                    msg += ' 浪费了一点时间';
-                }
-                this.addSystemMessage('系统', msg);
-            }
-            
+        if (order.leaveAtDoor) {
             this.completeDelivery(orderId);
+            return;
+        }
+        
+        this.uiManager.showBuildingSelectDialog(order, (result) => {
+            if (result.success) {
+                if (result.timePenalty > 0) {
+                    for (const o of this.orderManager.activeOrders) {
+                        o.timeRemaining -= result.timePenalty;
+                    }
+                    this.player.stats.satisfaction = Math.max(0, this.player.stats.satisfaction - result.satisfactionPenalty);
+                    this.player.stats.wrongBuildings++;
+                    order.record.wrongBuilding = true;
+                    
+                    let msg = '找错了楼栋！';
+                    if (result.timePenalty >= 60) {
+                        msg += ' 浪费了大量时间，满意度下降较多';
+                    } else {
+                        msg += ' 浪费了一点时间';
+                    }
+                    this.addSystemMessage('系统', msg);
+                }
+                
+                if (this.chapterFeatures && this.chapterFeatures.elevatorWait > 0) {
+                    order.timeRemaining -= this.chapterFeatures.elevatorWait;
+                    this.addSystemMessage('系统', `电梯等待消耗 ${this.chapterFeatures.elevatorWait} 秒`);
+                }
+                
+                this.completeDelivery(orderId);
+            } else {
+                this.showBuildingSelect(orderId);
+            }
         });
     }
 
     completeDelivery(orderId) {
+        const order = this.orderManager.activeOrders.find(o => o.id === orderId);
+        if (order) {
+            order.record.onTime = order.timeRemaining > 0;
+            if (order.isChainOrder) {
+                order.record.chainBonus = Math.floor(order.pay * GameConfig.gameSettings.chainOrderBonus);
+            }
+        }
+        
         const result = this.orderManager.deliverOrder(orderId, this.player);
         if (result.success) {
             let message = `送达成功！获得 ¥${result.pay}`;
             if (result.tip > 0) {
                 message += `，小费 ¥${result.tip}`;
+            }
+            if (order && order.record.chainBonus > 0) {
+                message += `，连单奖励 ¥${order.record.chainBonus}`;
             }
             if (result.satisfaction > 90) {
                 message += '，顾客非常满意！';
@@ -307,10 +454,19 @@ class Game {
             this.addSystemMessage('系统', message);
             this.uiManager.updateAllPanels();
             
+            if (this.player.priorityOrderId === orderId) {
+                this.player.priorityOrderId = null;
+            }
+            
             if (this.orderManager.completedOrders.length >= this.currentChapter.orderCount) {
                 setTimeout(() => this.endShift(), 1000);
             }
         }
+    }
+    
+    setPriorityOrder(orderId) {
+        this.player.priorityOrderId = orderId;
+        this.uiManager.updateAllPanels();
     }
 
     deliverOrder(orderId) {
@@ -330,7 +486,9 @@ class Game {
         if (!order) return;
         
         order.reported = true;
+        order.record.reported = true;
         order.timeRemaining += 60;
+        this.player.stats.reportsSubmitted++;
         
         this.addSystemMessage('系统', `报备成功！订单 #${orderId} 已标记"${reason}"，平台处理中，配送时间延长60秒`);
         this.addMessage({
@@ -507,12 +665,39 @@ class Game {
         const completed = this.orderManager.completedOrders.length;
         const totalEarnings = this.player.stats.totalEarnings + this.player.stats.totalTips;
         const target = this.currentChapter.orderCount;
-        let message = `班次结束！\n\n`;
+        
+        const onTimeCount = this.orderManager.completedOrders.filter(o => o.record && o.record.onTime).length;
+        const redLightCount = this.player.stats.redLightsRun;
+        const reportCount = this.player.stats.reportsSubmitted;
+        const wrongBuildingCount = this.player.stats.wrongBuildings;
+        const chargeCount = this.player.stats.chargesMade;
+        const repairCount = this.player.stats.repairsMade;
+        
+        const baseScore = totalEarnings + completed * 100;
+        const onTimeBonus = onTimeCount * 50;
+        const redLightPenalty = redLightCount * 100;
+        const reportPenalty = reportCount * 30;
+        const wrongBuildingPenalty = wrongBuildingCount * 50;
+        const finalScore = Math.max(0, baseScore + onTimeBonus - redLightPenalty - reportPenalty - wrongBuildingPenalty);
+        
+        let message = `班次结算 - ${this.currentChapter.name}\n\n`;
+        message += `━━━━━━━━━━━━━━━━\n`;
         message += `完成订单: ${completed}/${target}\n`;
+        message += `准时送达: ${onTimeCount}单 (+¥${onTimeBonus})\n`;
         message += `配送收入: ¥${this.player.stats.totalEarnings}\n`;
         message += `小费收入: ¥${this.player.stats.totalTips}\n`;
         message += `总收入: ¥${totalEarnings}\n`;
         message += `满意度: ${Math.floor(this.player.stats.satisfaction)}%\n\n`;
+        message += `━━━━━━━━━━━━━━━━\n`;
+        message += `📊 行为记录：\n`;
+        message += `闯红灯: ${redLightCount}次 (-¥${redLightPenalty})\n`;
+        message += `异常报备: ${reportCount}次 (-¥${reportPenalty})\n`;
+        message += `找错楼栋: ${wrongBuildingCount}次 (-¥${wrongBuildingPenalty})\n`;
+        message += `充电次数: ${chargeCount}次\n`;
+        message += `维修次数: ${repairCount}次\n\n`;
+        message += `━━━━━━━━━━━━━━━━\n`;
+        message += `🏆 最终评分: ${finalScore}分\n\n`;
+        
         if (completed >= target) {
             message += '🎉 恭喜完成目标！';
             const nextChapter = this.selectedChapter + 1;
@@ -523,7 +708,8 @@ class Game {
         } else {
             message += '未能完成目标，继续加油！';
         }
-        this.uiManager.showDialog('班次结算', message, [
+        
+        this.uiManager.showShiftReview(message, this.orderManager.completedOrders, finalScore, [
             { text: '返回主菜单', primary: true, callback: () => this.quitToMenu() }
         ]);
     }

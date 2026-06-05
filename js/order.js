@@ -4,9 +4,10 @@ class OrderManager {
         this.availableOrders = [];
         this.completedOrders = [];
         this.orderIdCounter = 0;
+        this.chainGroupId = 0;
     }
 
-    generateOrder(chapter) {
+    generateOrder(chapter, existingOrders = []) {
         const restaurant = GameConfig.restaurants[Math.floor(Math.random() * GameConfig.restaurants.length)];
         let deliveryLocation;
         do {
@@ -20,10 +21,17 @@ class OrderManager {
         const timeLimit = GameConfig.gameSettings.orderTimeLimit + Math.floor(distance / 30);
         const foodTypes = ['招牌菜', '套餐', '饮品', '甜点', '小吃'];
         const food = foodTypes[Math.floor(Math.random() * foodTypes.length)];
+        
+        const deliveryDetails = this.generateDeliveryDetails(deliveryLocation);
+        
+        const features = GameConfig.chapterFeatures[chapter.id] || { urgentRate: 0.1 };
+        const isUrgent = Math.random() < features.urgentRate;
+        
         const order = {
             id: ++this.orderIdCounter,
             restaurant: restaurant,
             deliveryLocation: deliveryLocation,
+            deliveryDetails: deliveryDetails,
             food: food,
             pay: pay,
             tip: Math.random() < (GameConfig.gameSettings.tipChance + (chapter.difficulty || 1) * 0.05) ? Math.floor(pay * 0.3) : 0,
@@ -31,12 +39,87 @@ class OrderManager {
             timeRemaining: timeLimit,
             foodTemperature: 100,
             status: 'available',
-            isUrgent: Math.random() < 0.2,
+            isUrgent: isUrgent,
             customerName: this.generateCustomerName(),
             note: this.generateOrderNote(),
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            reported: false,
+            chainGroupId: null,
+            isChainOrder: false,
+            detourDistance: 0,
+            record: {
+                onTime: true,
+                redLightRun: false,
+                reported: false,
+                wrongBuilding: false,
+                charged: false,
+                repaired: false,
+                customerInteraction: null,
+                chainBonus: 0
+            }
         };
+        
+        if (existingOrders.length > 0 && Math.random() < 0.3) {
+            const routeInfo = this.calculateRouteInfo(order, existingOrders);
+            order.isChainOrder = routeInfo.isOnRoute;
+            order.detourDistance = routeInfo.detourDistance;
+            if (routeInfo.isOnRoute) {
+                order.chainGroupId = this.chainGroupId;
+                order.pay = Math.floor(order.pay * (1 + GameConfig.gameSettings.chainOrderBonus));
+            }
+        }
+        
         return order;
+    }
+    
+    generateDeliveryDetails(location) {
+        const units = ['1单元', '2单元', '3单元'];
+        const unit = units[Math.floor(Math.random() * units.length)];
+        const floor = Math.ceil(Math.random() * (location.floor || 6));
+        const roomNumbers = ['01', '02', '03', '04', '05'];
+        const room = floor + roomNumbers[Math.floor(Math.random() * roomNumbers.length)];
+        
+        return {
+            unit: unit,
+            floor: floor,
+            room: room,
+            fullAddress: `${location.name} ${unit} ${floor}楼 ${room}室`
+        };
+    }
+    
+    calculateRouteInfo(newOrder, existingOrders) {
+        if (existingOrders.length === 0) {
+            return { isOnRoute: false, detourDistance: 0 };
+        }
+        
+        let minDetour = Infinity;
+        let isOnRoute = false;
+        
+        for (const existing of existingOrders) {
+            const restDist = Math.sqrt(
+                Math.pow(newOrder.restaurant.x - existing.restaurant.x, 2) + 
+                Math.pow(newOrder.restaurant.y - existing.restaurant.y, 2)
+            );
+            const delivDist = Math.sqrt(
+                Math.pow(newOrder.deliveryLocation.x - existing.deliveryLocation.x, 2) + 
+                Math.pow(newOrder.deliveryLocation.y - existing.deliveryLocation.y, 2)
+            );
+            
+            const detour = Math.min(restDist, delivDist);
+            if (detour < minDetour) {
+                minDetour = detour;
+            }
+            
+            if (restDist < 100 || delivDist < 100) {
+                isOnRoute = true;
+            }
+        }
+        
+        return {
+            isOnRoute: isOnRoute,
+            detourDistance: Math.floor(minDetour),
+            convenienceScore: isOnRoute ? '顺路' : minDetour < 150 ? '较顺路' : '绕路'
+        };
     }
 
     generateCustomerName() {
@@ -61,9 +144,41 @@ class OrderManager {
 
     generateAvailableOrders(chapter, count = 3) {
         while (this.availableOrders.length < count) {
-            const order = this.generateOrder(chapter);
+            const order = this.generateOrder(chapter, this.activeOrders);
             this.availableOrders.push(order);
         }
+    }
+    
+    getOrderRouteInfo(order, player) {
+        const target = order.status === 'accepted' ? order.restaurant : order.deliveryLocation;
+        const distance = Math.sqrt(Math.pow(target.x - player.x, 2) + Math.pow(target.y - player.y, 2));
+        const estimatedTime = distance / (GameConfig.gameSettings.playerSpeed * 60);
+        
+        let trafficLightsOnRoute = 0;
+        for (const light of GameConfig.trafficLights) {
+            const distToLight = Math.sqrt(Math.pow(light.x - player.x, 2) + Math.pow(light.y - player.y, 2));
+            if (distToLight < distance + 50) {
+                trafficLightsOnRoute++;
+            }
+        }
+        
+        let nearestStation = null;
+        let stationDist = Infinity;
+        for (const station of GameConfig.chargeStations) {
+            const dist = Math.sqrt(Math.pow(station.x - target.x, 2) + Math.pow(station.y - target.y, 2));
+            if (dist < stationDist) {
+                stationDist = dist;
+                nearestStation = station;
+            }
+        }
+        
+        return {
+            distance: Math.floor(distance),
+            estimatedTime: Math.ceil(estimatedTime),
+            trafficLights: trafficLightsOnRoute,
+            nearestStation: nearestStation,
+            stationDistance: Math.floor(stationDist)
+        };
     }
 
     acceptOrder(orderId, player) {

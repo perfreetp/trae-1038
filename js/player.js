@@ -3,6 +3,7 @@ class Player {
         this.x = 400;
         this.y = 300;
         this.speed = GameConfig.gameSettings.playerSpeed;
+        this.baseSpeed = GameConfig.gameSettings.playerSpeed;
         this.energy = GameConfig.gameSettings.maxEnergy;
         this.maxEnergy = GameConfig.gameSettings.maxEnergy;
         this.battery = GameConfig.gameSettings.maxBattery;
@@ -32,30 +33,45 @@ class Player {
             distanceTraveled: 0,
             rating: 5,
             satisfaction: 100,
-            badReviews: 0
+            badReviews: 0,
+            redLightsRun: 0,
+            reportsSubmitted: 0,
+            wrongBuildings: 0,
+            chargesMade: 0,
+            repairsMade: 0
         };
         this.activeMessages = [];
+        this.activeEvent = null;
+        this.eventEndTime = 0;
+        this.lastEventCheck = 0;
+        this.priorityOrderId = null;
     }
 
-    update(deltaTime, weatherModifier, isMoving) {
+    update(deltaTime, weatherModifier, isMoving, chapterFeatures = null) {
         const settings = GameConfig.gameSettings;
+        const featureMult = chapterFeatures || { energyMultiplier: 1, durabilityMultiplier: 1 };
+        
         if (isMoving) {
-            this.energy -= settings.energyDrainRate * weatherModifier.energyDrain;
+            this.energy -= settings.energyDrainRate * weatherModifier.energyDrain * featureMult.energyMultiplier;
             this.battery -= settings.batteryDrainRate;
-            this.vehicleDurability -= settings.vehicleDurabilityDrain;
+            this.vehicleDurability -= settings.vehicleDurabilityDrain * featureMult.durabilityMultiplier;
         }
         this.energy = Math.max(0, Math.min(this.maxEnergy, this.energy));
         this.battery = Math.max(0, Math.min(this.maxBattery, this.battery));
         this.vehicleDurability = Math.max(0, Math.min(100, this.vehicleDurability));
-        if (this.battery <= 0) {
-            this.speed = GameConfig.gameSettings.playerSpeed * 0.3;
-        } else {
-            this.speed = GameConfig.gameSettings.playerSpeed;
-            const motorEquip = this.equipment.motor;
-            if (motorEquip) {
-                this.speed *= 1 + motorEquip.stats.speed / 100;
-            }
+        
+        this.calculateEffectiveSpeed();
+        
+        if (isMoving && Date.now() - this.lastEventCheck > 1000) {
+            this.checkVehicleEvents();
+            this.lastEventCheck = Date.now();
         }
+        
+        if (this.activeEvent && Date.now() > this.eventEndTime) {
+            this.activeEvent = null;
+            this.calculateEffectiveSpeed();
+        }
+        
         const energySkill = this.skills[4] || 1;
         this.maxEnergy = GameConfig.gameSettings.maxEnergy * (1 + (energySkill - 1) * 0.1);
         const batteryEquip = this.equipment.battery;
@@ -64,6 +80,62 @@ class Player {
         } else {
             this.maxBattery = GameConfig.gameSettings.maxBattery;
         }
+    }
+    
+    calculateEffectiveSpeed() {
+        const settings = GameConfig.gameSettings;
+        let speed = this.baseSpeed;
+        
+        if (this.battery <= 0) {
+            speed *= 0.3;
+        } else {
+            const motorEquip = this.equipment.motor;
+            if (motorEquip) {
+                speed *= 1 + motorEquip.stats.speed / 100;
+            }
+        }
+        
+        if (this.vehicleDurability < 30) {
+            speed *= settings.durabilitySpeedPenalty.high;
+        } else if (this.vehicleDurability < 50) {
+            speed *= settings.durabilitySpeedPenalty.medium;
+        } else if (this.vehicleDurability < 80) {
+            speed *= settings.durabilitySpeedPenalty.low;
+        }
+        
+        if (this.activeEvent) {
+            speed *= this.activeEvent.speedMultiplier;
+        }
+        
+        this.speed = speed;
+    }
+    
+    checkVehicleEvents() {
+        if (this.activeEvent) return;
+        
+        const possibleEvents = GameConfig.vehicleEvents.filter(
+            e => this.vehicleDurability <= e.durabilityThreshold
+        );
+        
+        if (possibleEvents.length === 0) return;
+        
+        let chance;
+        if (this.vehicleDurability < 30) {
+            chance = GameConfig.gameSettings.breakdownChance.high;
+        } else if (this.vehicleDurability < 50) {
+            chance = GameConfig.gameSettings.breakdownChance.medium;
+        } else {
+            return;
+        }
+        
+        if (Math.random() < chance) {
+            const event = possibleEvents[Math.floor(Math.random() * possibleEvents.length)];
+            this.activeEvent = event;
+            this.eventEndTime = Date.now() + event.duration;
+            this.calculateEffectiveSpeed();
+            return event;
+        }
+        return null;
     }
 
     move(dx, dy, weatherModifier, gameMap) {

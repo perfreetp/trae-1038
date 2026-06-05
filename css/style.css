@@ -1122,3 +1122,136 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
 }
+
+.order-card.chain-order {
+    border-left-color: #8b5cf6;
+}
+
+.order-card.priority {
+    border: 2px solid #fbbf24;
+    background: rgba(251, 191, 36, 0.1);
+}
+
+.chain-tag {
+    color: #8b5cf6 !important;
+    font-weight: bold;
+}
+
+.route-info {
+    color: #60a5fa !important;
+    font-size: 11px !important;
+}
+
+.address-info {
+    color: #34d399 !important;
+    font-size: 11px !important;
+}
+
+.priority-btn {
+    background: #fbbf24 !important;
+    color: #000 !important;
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+}
+
+.priority-btn:disabled {
+    background: #92400e !important;
+    color: #fbbf24 !important;
+    cursor: default !important;
+}
+
+.priority-target {
+    border-left-color: #fbbf24 !important;
+    background: rgba(251, 191, 36, 0.1) !important;
+}
+
+.vehicle-event {
+    background: rgba(239, 68, 68, 0.2);
+    padding: 8px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: #fca5a5;
+    text-align: center;
+}
+
+.customer-interaction-dialog {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.response-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.response-btn {
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+    font-size: 13px;
+    color: #fff;
+    transition: all 0.2s;
+}
+
+.response-btn:hover {
+    background: rgba(74, 158, 255, 0.1);
+    border-color: #4a9eff;
+}
+
+.response-btn .effect {
+    font-size: 11px;
+    margin-left: 8px;
+}
+
+.response-btn .effect.positive {
+    color: #22c55e;
+}
+
+.response-btn .effect.negative {
+    color: #ef4444;
+}
+
+.shift-review-dialog pre {
+    white-space: pre-wrap;
+    font-family: inherit;
+    line-height: 1.8;
+    font-size: 13px;
+}
+
+.tag {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    margin-right: 4px;
+}
+
+.tag.positive {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+}
+
+.tag.negative {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.tag.warning {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+}
+
+.leaderboard-item .leaderboard-rank.rank-4,
+.leaderboard-item .leaderboard-rank.rank-5,
+.leaderboard-item .leaderboard-rank.rank-6,
+.leaderboard-item .leaderboard-rank.rank-7,
+.leaderboard-item .leaderboard-rank.rank-8 {
+    background: rgba(255, 255, 255, 0.1);
+    color: #888;
+}

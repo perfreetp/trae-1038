@@ -196,8 +196,54 @@ const GameConfig = {
         overTimePenalty: 0.5,
         earlyBonus: 0.2,
         tipChance: 0.3,
-        baseSatisfaction: 100
+        baseSatisfaction: 100,
+        durabilitySpeedPenalty: {
+            high: 0.7,
+            medium: 0.85,
+            low: 0.95
+        },
+        breakdownChance: {
+            high: 0.02,
+            medium: 0.005,
+            low: 0
+        },
+        chainOrderBonus: 0.15,
+        detourSatisfactionPenalty: 0.05
     },
+
+    vehicleEvents: [
+        { id: 'breakdown', name: '车辆抛锚', duration: 5000, speedMultiplier: 0, durabilityThreshold: 30 },
+        { id: 'skid', name: '轮胎打滑', duration: 3000, speedMultiplier: 0.4, durabilityThreshold: 50 },
+        { id: 'stutter', name: '动力卡顿', duration: 2000, speedMultiplier: 0.6, durabilityThreshold: 70 }
+    ],
+
+    chapterFeatures: {
+        1: { elevatorWait: 0, urgentRate: 0, energyMultiplier: 1, durabilityMultiplier: 1, visionMultiplier: 1 },
+        2: { elevatorWait: 15, urgentRate: 0.1, energyMultiplier: 1, durabilityMultiplier: 1, visionMultiplier: 1 },
+        3: { elevatorWait: 5, urgentRate: 0.05, energyMultiplier: 1, durabilityMultiplier: 1, visionMultiplier: 1 },
+        4: { elevatorWait: 10, urgentRate: 0.4, energyMultiplier: 1.1, durabilityMultiplier: 1.1, visionMultiplier: 1 },
+        5: { elevatorWait: 0, urgentRate: 0.15, energyMultiplier: 1.5, durabilityMultiplier: 1.3, visionMultiplier: 1 },
+        6: { elevatorWait: 10, urgentRate: 0.25, energyMultiplier: 1.3, durabilityMultiplier: 1.2, visionMultiplier: 0.6 },
+        7: { elevatorWait: 8, urgentRate: 0.3, energyMultiplier: 1.2, durabilityMultiplier: 1.1, visionMultiplier: 0.8 }
+    },
+
+    customerInteractions: [
+        { id: 'urge', name: '顾客催单', responses: [
+            { text: '马上到，请稍等', effect: { time: 10, satisfaction: 0 } },
+            { text: '路上有点堵，还需一会', effect: { time: 0, satisfaction: -5 } },
+            { text: '抱歉抱歉，尽快！', effect: { time: 5, satisfaction: -2 } }
+        ]},
+        { id: 'change_address', name: '顾客改地址', responses: [
+            { text: '好的，马上过去', effect: { time: -30, satisfaction: 5, changeTarget: true } },
+            { text: '太远了，送不了原地址吧', effect: { time: 0, satisfaction: -10 } },
+            { text: '可以，但要加钱哦', effect: { time: -20, satisfaction: -5, extraPay: 3 } }
+        ]},
+        { id: 'leave_door', name: '要求放门口', responses: [
+            { text: '好的，放门口了', effect: { time: 15, satisfaction: 0, leaveAtDoor: true } },
+            { text: '最好您来取一下，怕丢', effect: { time: 0, satisfaction: -3 } },
+            { text: '没问题，拍照给您', effect: { time: 10, satisfaction: 5 } }
+        ]}
+    ],
 
     leaderboard: [
         { rank: 1, name: '风驰电掣', score: 9850 },

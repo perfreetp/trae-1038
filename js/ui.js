@@ -89,10 +89,17 @@ class UIManager {
         const chapter = this.game.currentChapter;
         const player = this.game.player;
         const orderManager = this.game.orderManager;
+        const features = this.game.chapterFeatures || GameConfig.chapterFeatures[1];
 
         if (chapter) {
             const chapterInfo = document.getElementById('chapter-info');
             const weatherInfo = GameConfig.weatherTypes[chapter.weather];
+            let featureText = '';
+            if (features.elevatorWait > 10) featureText += ' | 🛗 电梯等待时间长';
+            if (features.urgentRate > 0.2) featureText += ' | ⚡ 急单较多';
+            if (features.energyMultiplier > 1.2) featureText += ' | 💪 体力消耗大';
+            if (features.visionMultiplier < 0.8) featureText += ' | 👁️ 视野受限';
+            
             chapterInfo.innerHTML = `
                 <h4>${chapter.icon} ${chapter.name}</h4>
                 <p>${chapter.description}</p>
@@ -100,6 +107,7 @@ class UIManager {
                     🌡️ 天气: ${weatherInfo.icon} ${weatherInfo.name} | 
                     🎯 目标: ${chapter.orderCount}单 | 
                     ⭐ 难度: ${'★'.repeat(chapter.difficulty)}
+                    ${featureText}
                 </p>
             `;
         }
@@ -133,18 +141,51 @@ class UIManager {
             currentTargets.innerHTML = '<p style="color: #888; font-size: 13px;">暂无进行中的订单</p>';
         } else {
             currentTargets.innerHTML = '';
+            
+            let priorityOrder = null;
+            if (player.priorityOrderId) {
+                priorityOrder = orderManager.activeOrders.find(o => o.id === player.priorityOrderId);
+            }
+            
+            if (priorityOrder) {
+                const isPickup = priorityOrder.status === 'accepted';
+                const target = isPickup ? priorityOrder.restaurant : priorityOrder.deliveryLocation;
+                const routeInfo = orderManager.getOrderRouteInfo(priorityOrder, player);
+                const targetEl = document.createElement('div');
+                targetEl.className = 'target-item priority-target';
+                targetEl.innerHTML = `
+                    <div class="target-title">
+                        ⭐ <strong>优先目标</strong>: ${isPickup ? '取餐' : '送餐'} - ${target.name}
+                    </div>
+                    <div class="target-detail">
+                        📏 距离: ${routeInfo.distance}m | ⏱️ 预计: ${routeInfo.estimatedTime}s
+                    </div>
+                    <div class="target-detail">
+                        🚦 红绿灯: ${routeInfo.trafficLights}个 | 🔌 最近充电站: ${routeInfo.nearestStation.name} (${routeInfo.stationDistance}m)
+                    </div>
+                    <div class="target-detail">
+                        ⏰ 剩余时间: ${Math.floor(priorityOrder.timeRemaining)}s
+                        ${priorityOrder.isUrgent ? ' | <span style="color: #ef4444;">⚠️ 急单</span>' : ''}
+                    </div>
+                `;
+                currentTargets.appendChild(targetEl);
+            }
+            
             for (const order of orderManager.activeOrders) {
+                if (order.id === player.priorityOrderId) continue;
+                
                 const targetEl = document.createElement('div');
                 const isPickup = order.status === 'accepted';
                 const target = isPickup ? order.restaurant : order.deliveryLocation;
-                const distance = Math.sqrt(Math.pow(target.x - player.x, 2) + Math.pow(target.y - player.y, 2));
+                const routeInfo = orderManager.getOrderRouteInfo(order, player);
                 targetEl.className = `target-item ${isPickup ? 'pickup' : ''}`;
                 targetEl.innerHTML = `
                     <div class="target-title">
                         ${isPickup ? '📍 取餐' : '🏠 送餐'}: ${target.name}
+                        ${order.isUrgent ? ' <span style="color: #ef4444;">(急)</span>' : ''}
                     </div>
                     <div class="target-detail">
-                        距离: ${Math.floor(distance)}m | 剩余: ${Math.floor(order.timeRemaining)}s
+                        距离: ${routeInfo.distance}m | 剩余: ${Math.floor(order.timeRemaining)}s
                         ${order.status === 'picked' ? ` | 温度: ${Math.floor(order.foodTemperature)}%` : ''}
                     </div>
                 `;
@@ -156,19 +197,27 @@ class UIManager {
         routeHints.innerHTML = '';
         
         if (orderManager.activeOrders.length > 0) {
-            const nearestOrder = orderManager.activeOrders.reduce((nearest, order) => {
-                const target = order.status === 'accepted' ? order.restaurant : order.deliveryLocation;
-                const dist = Math.sqrt(Math.pow(target.x - player.x, 2) + Math.pow(target.y - player.y, 2));
-                if (!nearest || dist < nearest.dist) {
-                    return { order, dist };
-                }
-                return nearest;
-            }, null);
+            let targetOrder = null;
+            if (player.priorityOrderId) {
+                targetOrder = orderManager.activeOrders.find(o => o.id === player.priorityOrderId);
+            }
+            
+            if (!targetOrder) {
+                targetOrder = orderManager.activeOrders.reduce((nearest, order) => {
+                    const target = order.status === 'accepted' ? order.restaurant : order.deliveryLocation;
+                    const dist = Math.sqrt(Math.pow(target.x - player.x, 2) + Math.pow(target.y - player.y, 2));
+                    if (!nearest || dist < nearest.dist) {
+                        return { order, dist };
+                    }
+                    return nearest;
+                }, null)?.order;
+            }
 
-            if (nearestOrder) {
-                const target = nearestOrder.order.status === 'accepted' 
-                    ? nearestOrder.order.restaurant 
-                    : nearestOrder.order.deliveryLocation;
+            if (targetOrder) {
+                const target = targetOrder.status === 'accepted' 
+                    ? targetOrder.restaurant 
+                    : targetOrder.deliveryLocation;
+                const routeInfo = orderManager.getOrderRouteInfo(targetOrder, player);
                 const dx = target.x - player.x;
                 const dy = target.y - player.y;
                 let direction = '';
@@ -179,8 +228,17 @@ class UIManager {
                 }
                 routeHints.innerHTML += `
                     <div class="route-hint">
-                        <strong>最近目标:</strong> ${target.name}<br>
-                        建议${direction}行驶，距离约${Math.floor(nearestOrder.dist)}米
+                        <strong>${player.priorityOrderId ? '⭐ 优先路线' : '建议路线'}:</strong> ${target.name}<br>
+                        建议${direction}行驶，距离约${routeInfo.distance}米，预计${routeInfo.estimatedTime}秒<br>
+                        沿途约${routeInfo.trafficLights}个红绿灯
+                    </div>
+                `;
+            }
+            
+            if (orderManager.activeOrders.length > 1) {
+                routeHints.innerHTML += `
+                    <div class="route-hint" style="background: rgba(74, 158, 255, 0.1);">
+                        💡 <strong>提示:</strong> 在订单面板点击"设优先"可切换优先目标
                     </div>
                 `;
             }
@@ -209,6 +267,14 @@ class UIManager {
             routeHints.innerHTML += `
                 <div class="route-hint warning">
                     ⚠️ <strong>体力不足!</strong> 请使用背包中的补给品恢复体力
+                </div>
+            `;
+        }
+        
+        if (player.activeEvent) {
+            routeHints.innerHTML += `
+                <div class="route-hint warning">
+                    ⚠️ <strong>${player.activeEvent.name}!</strong> 车辆状态异常，请小心驾驶
                 </div>
             `;
         }
@@ -248,7 +314,8 @@ class UIManager {
 
     createOrderCard(order, isActive) {
         const card = document.createElement('div');
-        card.className = `order-card ${order.isUrgent ? 'urgent' : ''} ${isActive ? 'delivering' : ''} ${order.reported ? 'reported' : ''}`;
+        const isPriority = this.game.player.priorityOrderId === order.id;
+        card.className = `order-card ${order.isUrgent ? 'urgent' : ''} ${isActive ? 'delivering' : ''} ${order.reported ? 'reported' : ''} ${order.isChainOrder ? 'chain-order' : ''} ${isPriority ? 'priority' : ''}`;
         const timeRemaining = Math.max(0, Math.floor(order.timeRemaining));
         const minutes = Math.floor(timeRemaining / 60);
         const seconds = timeRemaining % 60;
@@ -257,11 +324,34 @@ class UIManager {
             if (order.status === 'accepted') statusText = '待取餐';
             else if (order.status === 'picked') statusText = '配送中';
         }
+        
+        let routeInfo = '';
+        if (isActive && this.game.player) {
+            const info = this.game.orderManager.getOrderRouteInfo(order, this.game.player);
+            routeInfo = `
+                <div class="order-info route-info">
+                    📏 ${info.distance}m | ⏱️ 约${info.estimatedTime}s | 🚦 ${info.trafficLights}个红绿灯
+                </div>
+            `;
+        }
+        
+        let chainTag = '';
+        if (order.isChainOrder) {
+            const convenience = order.detourDistance < 50 ? '🔥 超顺路' : order.detourDistance < 100 ? '✅ 顺路' : '➡️ 较顺路';
+            chainTag = `<div class="order-info chain-tag">${convenience} | 绕行${order.detourDistance}m | 连单奖励</div>`;
+        }
+        
+        let addressInfo = '';
+        if (order.deliveryDetails) {
+            addressInfo = `<div class="order-info address-info">📍 ${order.deliveryDetails.fullAddress}</div>`;
+        }
+        
         card.innerHTML = `
             <div class="order-header">
                 <span class="order-restaurant">${order.restaurant.icon} ${order.restaurant.name}</span>
                 <span class="order-price">¥${order.pay}${order.tip > 0 ? ` +¥${order.tip}` : ''}</span>
             </div>
+            ${addressInfo}
             <div class="order-info">
                 送往: ${order.deliveryLocation.name} (${order.deliveryLocation.floor}楼)
             </div>
@@ -269,13 +359,19 @@ class UIManager {
                 餐品: ${order.food}
             </div>
             ${order.note ? `<div class="order-info">备注: ${order.note}</div>` : ''}
+            ${chainTag}
+            ${routeInfo}
             ${order.reported ? '<div class="order-info" style="color: #f59e0b;">⚠️ 已报备，平台处理中</div>' : ''}
+            ${order.leaveAtDoor ? '<div class="order-info" style="color: #22c55e;">🚪 顾客要求放门口</div>' : ''}
             <div class="order-timer">
                 ${statusText ? statusText + ' | ' : ''}剩余 ${minutes}:${seconds.toString().padStart(2, '0')}
                 ${order.status === 'picked' ? ` | 温度: ${Math.floor(order.foodTemperature)}%` : ''}
             </div>
             <div class="order-actions">
                 ${isActive ? `
+                    <button class="order-btn priority-btn" data-action="priority" data-id="${order.id}" ${isPriority ? 'disabled' : ''}>
+                        ${isPriority ? '⭐ 优先' : '设优先'}
+                    </button>
                     ${order.status === 'accepted' ? `<button class="order-btn" data-action="pickup" data-id="${order.id}">取餐</button>` : ''}
                     ${order.status === 'picked' ? `<button class="order-btn" data-action="deliver" data-id="${order.id}">送达</button>` : ''}
                     <button class="order-btn cancel" data-action="cancel" data-id="${order.id}">取消</button>
@@ -310,6 +406,9 @@ class UIManager {
                 this.showConfirmDialog('取消订单', '确定要取消这个订单吗？这会影响您的评分。', () => {
                     game.cancelOrder(orderId);
                 });
+                break;
+            case 'priority':
+                game.setPriorityOrder(orderId);
                 break;
         }
     }
@@ -385,9 +484,17 @@ class UIManager {
     updateVehicle(player) {
         const vehicleInfo = document.getElementById('vehicle-info');
         const durabilityColor = player.vehicleDurability > 50 ? '#22c55e' : player.vehicleDurability > 20 ? '#f59e0b' : '#ef4444';
-        const speedPenalty = player.vehicleDurability < 30 ? ' (速度降低)' : player.vehicleDurability < 50 ? ' (轻微降速)' : '';
+        const speedPenalty = player.vehicleDurability < 30 ? ' (速度大幅降低)' : player.vehicleDurability < 50 ? ' (轻微降速)' : player.vehicleDurability < 80 ? ' (效率略降)' : '';
+        
+        let eventStatus = '';
+        if (player.activeEvent) {
+            const remaining = Math.max(0, Math.ceil((player.eventEndTime - Date.now()) / 1000));
+            eventStatus = `<div class="vehicle-event">⚠️ ${player.activeEvent.name}中... 剩余${remaining}秒</div>`;
+        }
+        
         vehicleInfo.innerHTML = `
             <div class="vehicle-name">🛵 电动摩托车</div>
+            ${eventStatus}
             <div class="vehicle-stat">
                 <span>耐久度${speedPenalty}</span>
                 <span>${Math.floor(player.vehicleDurability)}%</span>
@@ -405,6 +512,14 @@ class UIManager {
             <div class="vehicle-stat">
                 <span>当前速度</span>
                 <span>${player.speed.toFixed(1)} 格/秒</span>
+            </div>
+            <div class="vehicle-stat">
+                <span>维修记录</span>
+                <span>${player.stats.repairsMade}次</span>
+            </div>
+            <div class="vehicle-stat">
+                <span>充电记录</span>
+                <span>${player.stats.chargesMade}次</span>
             </div>
             <button class="repair-btn" id="repair-btn" ${player.vehicleDurability >= 100 ? 'disabled' : ''}>
                 ${player.vehicleDurability >= 100 ? '车辆状态良好' : `维修车辆 (¥${Math.ceil((100 - player.vehicleDurability) * 0.5)})`}
@@ -471,6 +586,11 @@ class UIManager {
         
         player.battery = Math.min(player.maxBattery, player.battery + chargeAmount);
         player.money -= cost;
+        player.stats.chargesMade++;
+        
+        for (const order of this.game.orderManager.activeOrders) {
+            order.record.charged = true;
+        }
         
         this.updateAllPanels();
         this.showDialog('充电完成', `已充电 +${Math.floor(chargeAmount)}，花费 ¥${cost}`);
@@ -487,6 +607,12 @@ class UIManager {
         
         player.money -= repairCost;
         player.vehicleDurability = 100;
+        player.stats.repairsMade++;
+        player.calculateEffectiveSpeed();
+        
+        for (const order of this.game.orderManager.activeOrders) {
+            order.record.repaired = true;
+        }
         
         this.updateAllPanels();
         this.showDialog('维修完成', `车辆已修复，花费 ¥${repairCost}`);
@@ -764,23 +890,31 @@ class UIManager {
 
     showBuildingSelectDialog(order, onComplete) {
         const location = order.deliveryLocation;
+        const details = order.deliveryDetails || { unit: '1单元', floor: 3, room: '301' };
         const maxFloor = location.floor || 6;
-        const correctFloor = Math.ceil(maxFloor * 0.5) + Math.floor(Math.random() * Math.ceil(maxFloor * 0.5));
-        const units = ['1单元', '2单元', '3单元'];
-        const correctUnit = units[Math.floor(Math.random() * units.length)];
+        const correctFloor = details.floor;
+        const correctUnit = details.unit;
         
         let selectedFloor = null;
         let selectedUnit = null;
+        let attempts = 0;
         
-        const content = `
+        const renderContent = () => `
             <div class="building-select-dialog">
                 <p><strong>${location.name}</strong></p>
+                <p style="font-size: 13px; color: #4a9eff; margin-bottom: 10px;">
+                    📍 目标地址：${details.fullAddress}
+                </p>
                 <p style="font-size: 13px; color: #aaa;">请选择正确的单元和楼层进行配送</p>
+                
+                ${attempts > 0 ? `<p style="font-size: 12px; color: #ef4444;">❌ 上次选错了，请重新选择（已尝试 ${attempts} 次）</p>` : ''}
                 
                 <div>
                     <p style="margin: 10px 0 5px;">选择单元：</p>
                     <div class="unit-select">
-                        ${units.map(u => `<button class="unit-btn" data-unit="${u}">${u}</button>`).join('')}
+                        ${['1单元', '2单元', '3单元'].map(u => 
+                            `<button class="unit-btn" data-unit="${u}">${u}</button>`
+                        ).join('')}
                     </div>
                 </div>
                 
@@ -801,7 +935,29 @@ class UIManager {
         
         const dialog = document.getElementById('dialog-box');
         document.getElementById('dialog-title').textContent = '楼栋选择';
-        document.getElementById('dialog-message').innerHTML = content;
+        
+        const updateContent = () => {
+            document.getElementById('dialog-message').innerHTML = renderContent();
+            
+            setTimeout(() => {
+                document.querySelectorAll('.unit-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        document.querySelectorAll('.unit-btn').forEach(b => b.classList.remove('selected'));
+                        btn.classList.add('selected');
+                        selectedUnit = btn.dataset.unit;
+                    });
+                });
+                document.querySelectorAll('.floor-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        document.querySelectorAll('.floor-btn').forEach(b => b.classList.remove('selected'));
+                        btn.classList.add('selected');
+                        selectedFloor = parseInt(btn.dataset.floor);
+                    });
+                });
+            }, 50);
+        };
+        
+        updateContent();
         
         const buttonsEl = document.getElementById('dialog-buttons');
         buttonsEl.innerHTML = '';
@@ -811,6 +967,7 @@ class UIManager {
         cancelBtn.textContent = '取消';
         cancelBtn.addEventListener('click', () => {
             dialog.classList.add('hidden');
+            onComplete({ success: false });
         });
         buttonsEl.appendChild(cancelBtn);
         
@@ -819,40 +976,130 @@ class UIManager {
         confirmBtn.textContent = '确认送达';
         confirmBtn.addEventListener('click', () => {
             if (selectedFloor && selectedUnit) {
-                dialog.classList.add('hidden');
-                
                 const isCorrect = selectedFloor === correctFloor && selectedUnit === correctUnit;
-                const isPartial = selectedFloor === correctFloor || selectedUnit === correctUnit;
                 
                 if (isCorrect) {
-                    onComplete({ success: true, timePenalty: 0, satisfactionPenalty: 0 });
-                } else if (isPartial) {
-                    onComplete({ success: true, timePenalty: 30, satisfactionPenalty: 5 });
+                    dialog.classList.add('hidden');
+                    onComplete({ 
+                        success: true, 
+                        timePenalty: attempts * 20, 
+                        satisfactionPenalty: attempts * 3 
+                    });
                 } else {
-                    onComplete({ success: true, timePenalty: 60, satisfactionPenalty: 15 });
+                    attempts++;
+                    selectedFloor = null;
+                    selectedUnit = null;
+                    updateContent();
+                    
+                    if (attempts >= 3) {
+                        this.showDialog('提示', '多次选错，建议仔细核对地址信息');
+                    }
                 }
             }
         });
         buttonsEl.appendChild(confirmBtn);
         
         dialog.classList.remove('hidden');
+    }
+    
+    showCustomerInteractionDialog(order, interaction) {
+        const content = `
+            <div class="customer-interaction-dialog">
+                <p style="margin-bottom: 10px;">
+                    <strong>顾客-${order.customerName}</strong> (订单 #${order.id})
+                </p>
+                <p style="background: rgba(245, 158, 11, 0.1); padding: 10px; border-radius: 6px; margin-bottom: 15px;">
+                    ${this.game.getCustomerMessageContent(interaction)}
+                </p>
+                <p style="font-size: 13px; color: #aaa; margin-bottom: 10px;">请选择回复：</p>
+                <div class="response-options">
+                    ${interaction.responses.map((r, i) => `
+                        <button class="response-btn" data-index="${i}">
+                            ${r.text}
+                            ${r.effect.time > 0 ? `<span class="effect positive">+${r.effect.time}s</span>` : ''}
+                            ${r.effect.time < 0 ? `<span class="effect negative">${r.effect.time}s</span>` : ''}
+                            ${r.effect.satisfaction > 0 ? `<span class="effect positive">+${r.effect.satisfaction}满意度</span>` : ''}
+                            ${r.effect.satisfaction < 0 ? `<span class="effect negative">${r.effect.satisfaction}满意度</span>` : ''}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+        
+        const dialog = document.getElementById('dialog-box');
+        document.getElementById('dialog-title').textContent = '顾客消息';
+        document.getElementById('dialog-message').innerHTML = content;
+        
+        const buttonsEl = document.getElementById('dialog-buttons');
+        buttonsEl.innerHTML = '';
+        
+        dialog.classList.remove('hidden');
         
         setTimeout(() => {
-            document.querySelectorAll('.unit-btn').forEach(btn => {
+            document.querySelectorAll('.response-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
-                    document.querySelectorAll('.unit-btn').forEach(b => b.classList.remove('selected'));
-                    btn.classList.add('selected');
-                    selectedUnit = btn.dataset.unit;
-                });
-            });
-            document.querySelectorAll('.floor-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    document.querySelectorAll('.floor-btn').forEach(b => b.classList.remove('selected'));
-                    btn.classList.add('selected');
-                    selectedFloor = parseInt(btn.dataset.floor);
+                    const index = parseInt(btn.dataset.index);
+                    dialog.classList.add('hidden');
+                    this.game.handleCustomerResponse(order.id, index);
                 });
             });
         }, 50);
+    }
+    
+    showShiftReview(summary, completedOrders, finalScore, buttons) {
+        let orderDetails = '';
+        if (completedOrders && completedOrders.length > 0) {
+            orderDetails = '<div style="margin-top: 15px; max-height: 200px; overflow-y: auto;">';
+            orderDetails += '<p style="font-weight: bold; margin-bottom: 8px;">📋 每单详情：</p>';
+            for (const order of completedOrders) {
+                const record = order.record || {};
+                const tags = [];
+                if (record.onTime) tags.push('<span class="tag positive">准时</span>');
+                else tags.push('<span class="tag negative">超时</span>');
+                if (record.redLightRun) tags.push('<span class="tag negative">闯红灯</span>');
+                if (record.reported) tags.push('<span class="tag warning">已报备</span>');
+                if (record.wrongBuilding) tags.push('<span class="tag negative">找错楼</span>');
+                if (record.chainBonus > 0) tags.push('<span class="tag positive">连单+¥' + record.chainBonus + '</span>');
+                
+                orderDetails += `
+                    <div style="padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-bottom: 6px;">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span>#${order.id} ${order.restaurant.name} → ${order.deliveryLocation.name}</span>
+                            <span>¥${order.finalPay || order.pay}</span>
+                        </div>
+                        <div style="margin-top: 4px;">${tags.join(' ')}</div>
+                    </div>
+                `;
+            }
+            orderDetails += '</div>';
+        }
+        
+        const content = `
+            <div class="shift-review-dialog">
+                <pre style="white-space: pre-wrap; font-family: inherit; line-height: 1.8;">${summary}</pre>
+                ${orderDetails}
+            </div>
+        `;
+        
+        const dialog = document.getElementById('dialog-box');
+        document.getElementById('dialog-title').textContent = '班次复盘';
+        document.getElementById('dialog-message').innerHTML = content;
+        
+        const buttonsEl = document.getElementById('dialog-buttons');
+        buttonsEl.innerHTML = '';
+        
+        for (const btn of buttons) {
+            const button = document.createElement('button');
+            button.className = `dialog-btn ${btn.primary ? 'primary' : ''}`;
+            button.textContent = btn.text;
+            button.addEventListener('click', () => {
+                dialog.classList.add('hidden');
+                if (btn.callback) btn.callback();
+            });
+            buttonsEl.appendChild(button);
+        }
+        
+        dialog.classList.remove('hidden');
     }
 
     showShop() {
